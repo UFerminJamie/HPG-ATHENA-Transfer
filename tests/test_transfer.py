@@ -7,7 +7,7 @@ from urllib.error import HTTPError
 
 from hpg_athena_transfer.annotations import AnnotationError, normalize_scientific_rgba_alpha, parse_documents
 from hpg_athena_transfer.api import APIError, AthenaClient
-from hpg_athena_transfer.matching import Slide, build_index, parse_destination, parse_source, slide_basename
+from hpg_athena_transfer.matching import Slide, build_index, match_source, parse_destination, parse_source, slide_basename
 from hpg_athena_transfer.transfer import PROVENANCE_KEY, transfer
 
 
@@ -40,15 +40,16 @@ class FakeClient:
 
 
 class MatchingTests(unittest.TestCase):
-    def test_exact_suffixes(self):
+    def test_any_json_name_and_optional_type_label(self):
         cases = {"a_heatmap.json": "Heatmap", "a_refined_heatmap.json": "Refined Heatmap",
                  "a_mask_gt.json": "Ground Truth Mask", "a_mask_prediction.json": "Prediction Mask"}
         for filename, kind in cases.items():
             with self.subTest(filename=filename):
                 source = parse_source(Path(filename))
-                self.assertEqual((source.sample, source.kind), ("a", kind))
-        self.assertIsNone(parse_source(Path("a_heatmap.JSON")))
-        self.assertIsNone(parse_source(Path("a_heatmap_extra.json")))
+                self.assertEqual((source.stem, source.kind), (Path(filename).stem, kind))
+        self.assertEqual(parse_source(Path("a_heatmap_extra.json")).kind, "Annotation")
+        self.assertEqual(parse_source(Path("a_custom.JSON")).stem, "a_custom")
+        self.assertIsNone(parse_source(Path("a_custom.txt")))
 
     def test_wsi_extensions_and_exactness(self):
         self.assertEqual(slide_basename("Case.TIFF"), "Case")
@@ -65,6 +66,13 @@ class MatchingTests(unittest.TestCase):
     def test_ambiguous_basename(self):
         index = build_index([Slide("1", "Case.svs", ("Case",)), Slide("2", "Case.tif", ("Case",))])
         self.assertEqual(len(index["Case"]), 2)
+
+    def test_prefix_uses_longest_basename(self):
+        index = build_index([Slide("1", "Case.svs", ("Case",)), Slide("2", "Case2.svs", ("Case2",))])
+        name, slides = match_source("Case2_any_label", index)
+        self.assertEqual(name, "Case2")
+        self.assertEqual([slide.id for slide in slides], ["2"])
+        self.assertEqual(match_source("case2_any_label", index), (None, []))
 
     def test_destination_url(self):
         ident = "6ad6a9d8e27b973811097f02"
@@ -126,7 +134,7 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(repeated["summary"], {"skipped-identical": 2})
         self.assertEqual(len(client.created), 2)
 
-    def test_ambiguous_unmatched_and_duplicate_source(self):
+    def test_ambiguous_unmatched_and_multiple_files_for_one_sample(self):
         self.write("Exact_heatmap.json", document())
         self.write("Missing_heatmap.json", document())
         client = FakeClient([Slide("a", "Exact.svs", ("Exact",)), Slide("b", "Exact.TIF", ("Exact",))])
@@ -137,7 +145,38 @@ class TransferTests(unittest.TestCase):
         child.mkdir()
         (child / "Exact_heatmap.json").write_text(json.dumps(document()))
         result = transfer(FakeClient(), self.source, "destination", self.manifest, recursive=True)
-        self.assertEqual(result["summary"].get("ambiguous"), 2)
+        self.assertEqual(result["summary"], {"planned": 2, "unmatched": 1})
+
+    def test_arbitrary_json_names_are_uploaded_to_matching_slide(self):
+        self.write("Exact_regions_v5.json", document("Regions"))
+        self.write("Exact_any_other_file.json", document("Regions"))
+        self.write("Exactish_regions.json", document("Different slide"))
+        client = FakeClient([Slide("a", "Exact.svs", ("Exact",)),
+                             Slide("b", "Exactish.tif", ("Exactish",))])
+        result = transfer(client, self.source, "destination", self.manifest, apply=True)
+        self.assertEqual(result["summary"], {"uploaded": 3})
+        records = json.loads(self.manifest.read_text())["records"]
+        self.assertEqual({row["source_path"].split("/")[-1]: row["slide_id"] for row in records},
+                         {"Exact_regions_v5.json": "a", "Exact_any_other_file.json": "a",
+                          "Exactish_regions.json": "b"})
+        self.assertEqual({row["annotation_type"] for row in records}, {"Annotation"})
+        self.assertEqual(len(client.created), 3)
+        repeated = transfer(client, self.source, "destination", self.manifest, apply=True)
+        self.assertEqual(repeated["summary"], {"skipped-identical": 3})
+
+    def test_same_filename_in_different_subdirectories_uploads_both(self):
+        for folder in ("first", "second"):
+            directory = self.source / folder
+            directory.mkdir()
+            (directory / "Exact_regions.json").write_text(json.dumps(document()))
+        client = FakeClient()
+        result = transfer(client, self.source, "destination", self.manifest,
+                          recursive=True, apply=True)
+        self.assertEqual(result["summary"], {"uploaded": 2})
+        self.assertEqual(len(client.created), 2)
+        repeated = transfer(client, self.source, "destination", self.manifest,
+                            recursive=True, apply=True)
+        self.assertEqual(repeated["summary"], {"skipped-identical": 2})
 
     def test_invalid_and_api_failure(self):
         (self.source / "Exact_heatmap.json").write_text("{broken")

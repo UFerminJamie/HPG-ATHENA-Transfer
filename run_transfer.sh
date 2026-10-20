@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=hpg-athena-transfer
-#SBATCH --account=sarder-hubmap
-#SBATCH --partition=hpg-default
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
 #SBATCH --time=08:00:00
@@ -11,7 +9,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 || $1 == --help || $1 == -h ]]; then
-    echo "Usage: sbatch run_transfer.sh ATHENA_COLLECTION_OR_FOLDER_URL_OR_ID [--apply] [other CLI options]" >&2
+    echo "Usage: sbatch run_transfer.sh ATHENA_COLLECTION_OR_FOLDER_URL_OR_ID --source JSON_DIR [--apply] [other CLI options]" >&2
     echo "Default: dry-run. Add --apply only after reviewing its manifest." >&2
     exit 2
 fi
@@ -21,7 +19,7 @@ shift
 
 project_dir=$(cd -- "${SLURM_SUBMIT_DIR:-$(dirname -- "${BASH_SOURCE[0]}")}" && pwd)
 if [[ ! -f $project_dir/pyproject.toml ]]; then
-    echo "Submit this job from the HPG-ATHENA-Transfer project directory" >&2
+    echo "Submit this job from the transfer project directory" >&2
     exit 2
 fi
 cd -- "$project_dir"

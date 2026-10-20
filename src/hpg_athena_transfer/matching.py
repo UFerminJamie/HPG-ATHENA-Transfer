@@ -1,4 +1,4 @@
-"""Exact source and destination name matching."""
+"""Match JSON filename prefixes to slide basenames."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +20,7 @@ OBJECT_ID = re.compile(r"^[0-9a-fA-F]{24}$")
 @dataclass(frozen=True)
 class Source:
     path: Path
-    sample: str
+    stem: str
     kind: str
 
 
@@ -32,15 +32,16 @@ class Slide:
 
 
 def parse_source(path: Path) -> Optional[Source]:
+    if path.suffix.lower() != ".json" or not path.stem:
+        return None
     for suffix, kind in SUFFIXES.items():
-        if path.name.endswith(suffix):
-            sample = path.name[: -len(suffix)]
-            return Source(path, sample, kind) if sample else None
-    return None
+        if path.name.lower().endswith(suffix):
+            return Source(path, path.stem, kind)
+    return Source(path, path.stem, "Annotation")
 
 
 def discover(source_dir: Path, recursive: bool = False) -> List[Source]:
-    paths = source_dir.rglob("*.json") if recursive else source_dir.glob("*.json")
+    paths = source_dir.rglob("*") if recursive else source_dir.iterdir()
     return sorted((s for p in paths if p.is_file() if (s := parse_source(p))), key=lambda s: str(s.path))
 
 
@@ -62,6 +63,17 @@ def build_index(slides: Iterable[Slide]) -> Dict[str, List[Slide]]:
             if not any(other.id == slide.id for other in existing):
                 existing.append(slide)
     return index
+
+
+def match_source(stem: str, index: Dict[str, List[Slide]]) -> Tuple[Optional[str], List[Slide]]:
+    """Use the longest slide basename that prefixes a JSON filename stem."""
+    names = [name for name in index if stem.startswith(name)]
+    if not names:
+        return None, []
+    longest = max(map(len, names))
+    matches = [name for name in names if len(name) == longest]
+    slides = {slide.id: slide for name in matches for slide in index[name]}
+    return matches[0], list(slides.values())
 
 
 def parse_destination(value: str) -> Tuple[Optional[str], str]:

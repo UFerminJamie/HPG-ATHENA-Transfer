@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from .annotations import AnnotationError, normalize_scientific_rgba_alpha, parse_documents
 from .api import APIError, AthenaClient
-from .matching import Source, build_index, discover
+from .matching import Source, build_index, discover, match_source
 
 
 PROVENANCE_KEY = "hpg_athena_transfer"
@@ -24,10 +24,15 @@ def _provenance(record: Dict[str, Any]) -> Dict[str, Any]:
     return value if isinstance(value, dict) and value.get("tool") == PROVENANCE_KEY else {}
 
 
-def _identical(records: List[Dict[str, Any]], sha256: str, index: int) -> Optional[Dict[str, Any]]:
+def _identical(records: List[Dict[str, Any]], sha256: str, index: int,
+               filename: str, relative_path: str) -> Optional[Dict[str, Any]]:
     for record in records:
         provenance = _provenance(record)
-        if provenance.get("sha256") == sha256 and provenance.get("document_index") == index:
+        same_source = (provenance.get("source_relative_path") == relative_path
+                       if "source_relative_path" in provenance
+                       else provenance.get("source_filename") == filename)
+        if (provenance.get("sha256") == sha256 and provenance.get("document_index") == index
+                and same_source):
             return record
     return None
 
@@ -55,7 +60,7 @@ def _write_manifest(path: Path, rows: List[Dict[str, Any]], dry_run: bool,
 
 
 def _row(source: Source) -> Dict[str, Any]:
-    return {"source_path": str(source.path.resolve()), "sample_name": source.sample,
+    return {"source_path": str(source.path.resolve()), "sample_name": None,
             "annotation_type": source.kind, "slide_name": None, "slide_id": None,
             "sha256": None, "document_index": None, "annotation_id": None,
             "annotation_name": None, "color_format_adaptations": 0,
@@ -69,25 +74,23 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
         raise ValueError("Source directory does not exist or is not readable")
     sources = discover(source_dir, recursive)
     if not sources:
-        raise ValueError("No JSON files with recognized suffixes found")
+        raise ValueError("No JSON files found in the source directory")
     slides = client.slides(destination)
     slide_index = build_index(slides)
     duplicate_slide_basenames = sum(len(candidates) > 1 for candidates in slide_index.values())
-    source_counts = Counter((source.sample, source.kind) for source in sources)
     rows: List[Dict[str, Any]] = []
     annotation_cache: Dict[str, List[Dict[str, Any]]] = {}
 
     for source in sources:
         row = _row(source)
-        candidates = slide_index.get(source.sample, [])
-        if source_counts[(source.sample, source.kind)] > 1:
-            row.update(status="ambiguous", error="duplicate source sample and annotation type")
-            rows.append(row)
-        elif not candidates:
-            row.update(status="unmatched", error="no exact WSI item or image filename match")
+        relative_path = source.path.relative_to(source_dir).as_posix()
+        sample_name, candidates = match_source(source.stem, slide_index)
+        row["sample_name"] = sample_name
+        if not candidates:
+            row.update(status="unmatched", error="no WSI item or image filename prefixes this JSON filename")
             rows.append(row)
         elif len(candidates) > 1:
-            row.update(status="ambiguous", error="multiple WSI items have this exact basename")
+            row.update(status="ambiguous", error="multiple WSI items have the matching basename")
             rows.append(row)
         else:
             slide = candidates[0]
@@ -105,7 +108,7 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                     document_row = dict(row, document_index=index, annotation_name=original["name"])
                     normalized, adaptations = normalize_scientific_rgba_alpha(original)
                     records = annotation_cache[slide.id]
-                    found = _identical(records, sha256, index)
+                    found = _identical(records, sha256, index, source.path.name, relative_path)
                     if found:
                         document_row.update(status="skipped-identical", annotation_id=found.get("_id"))
                     elif adaptations and not normalize_rgba_alpha:
@@ -124,6 +127,7 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                         document["attributes"] = dict(original.get("attributes", {}))
                         document["attributes"][PROVENANCE_KEY] = {
                             "tool": PROVENANCE_KEY, "source_filename": source.path.name,
+                            "source_relative_path": relative_path,
                             "sha256": sha256, "document_index": index,
                             "annotation_type": source.kind,
                             "color_format_adaptations": document_row["color_format_adaptations"],
@@ -143,7 +147,8 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                             try:
                                 refreshed = client.annotations(slide.id)
                                 annotation_cache[slide.id] = refreshed
-                                recovered = _identical(refreshed, sha256, index)
+                                recovered = _identical(refreshed, sha256, index, source.path.name,
+                                                       relative_path)
                             except APIError:
                                 recovered = None
                             if recovered:

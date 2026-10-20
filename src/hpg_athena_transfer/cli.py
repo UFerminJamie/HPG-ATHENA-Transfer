@@ -9,9 +9,6 @@ from .api import APIError, AthenaClient
 from .transfer import transfer
 
 
-DEFAULT_SOURCE = Path("/orange/pinaki.sarder/j.fermin/cort_med_wsi/trident_processed_final/KPMP/inference_jsons/svc_2_rbf_1.0/")
-
-
 def _api_key() -> str:
     if os.environ.get("ATHENA_API_KEY"):
         return os.environ["ATHENA_API_KEY"]
@@ -27,10 +24,10 @@ def _api_key() -> str:
 def parser() -> argparse.ArgumentParser:
     command = argparse.ArgumentParser(
         prog="hpg-athena-transfer",
-        description="Attach native DSA JSON annotations to exactly matching Athena WSI items. Dry-run is the default.",
+        description="Attach native DSA JSON annotations to Athena WSI items by filename prefix. Dry-run is the default.",
     )
-    command.add_argument("--source", type=Path, default=DEFAULT_SOURCE,
-                         help="JSON source directory on HiPerGator (default: configured KPMP inference directory)")
+    command.add_argument("--source", type=Path,
+                         help="Directory containing JSON annotations on HiPerGator (required for transfers)")
     command.add_argument("--destination", help="Athena collection/folder URL or 24-character ID")
     command.add_argument("--api-url", default="https://athena.rc.ufl.edu/api/v1",
                          help="Girder API base URL (default: %(default)s)")
@@ -51,6 +48,8 @@ def main() -> int:
     args = parser().parse_args()
     if not args.destination and not args.check_connection:
         parser().error("--destination is required unless --check-connection is used")
+    if not args.source and not args.check_connection:
+        parser().error("--source is required for transfers")
     key = _api_key()
     if not key:
         print("ATHENA_API_KEY is missing from the environment or ignored .env file", file=sys.stderr)
