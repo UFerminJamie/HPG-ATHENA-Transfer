@@ -104,4 +104,59 @@ The script uses one CPU, 4 GB RAM, and an eight-hour limit; adjust its `#SBATCH`
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
+# HPG to Athena Annotation Transfer
+
+This program runs on HiPerGator, reads annotation JSON files from its local filesystem, and uses Athena’s Girder API to attach their contents to slides. It does not upload the JSON files as ordinary files in an Athena folder.
+
+## How the transfer works
+
+1. **Authenticate.** The program exchanges `ATHENA_API_KEY` for a Girder token with `POST /api_key/token`. It sends the token in the `Girder-Token` header on later requests.
+2. **Find slides.** It searches the destination collection or folder and its subfolders, using `GET /folder`, `GET /item`, and `GET /item/{id}/files`.
+3. **Match and validate locally.** For each JSON file, it finds a slide whose sample or image filename, without its extension, starts with the JSON filename. It reads and validates the annotation document on HiPerGator.
+4. **Check existing annotations.** It calls `GET /annotation?itemId=...` and skips documents already uploaded from the same source.
+5. **Create and verify.** With `--apply`, it sends each new annotation document as JSON to `POST /annotation?itemId=...`, then queries the slide’s annotations again to verify the new record.
+6. **Write the manifest.** The transfer manifest is written locally on HiPerGator.
+
+## Dry run and apply
+
+A dry run performs the authentication, destination lookup, local matching and validation, and existing-annotation checks. It does not send an annotation creation request.
+
+Use `--apply` to create new annotations. The program verifies each created record by querying the slide’s annotations again.
+
+## Transfer flow
+
+```mermaid
+flowchart TD
+    A([Run on HiPerGator]) --> B[Read JSON files from local filesystem]
+    B --> C["Authenticate: POST /api_key/token<br/>Use token in Girder-Token header"]
+    C --> D["Search destination recursively<br/>GET /folder, GET /item, GET /item/{id}/files"]
+    D --> E{"For each JSON file, does a slide sample or image basename start with the JSON filename?"}
+
+    E -->|"No match"| N[Record no matching slide]
+    E -->|"Match found"| F[Read and validate annotation JSON locally]
+    F -->|"Invalid"| X[Record validation error]
+    F -->|"Valid"| G["Check existing annotations<br/>GET /annotation?itemId=..."]
+
+    G --> H{"Already uploaded from this source?"}
+    H -->|"Yes"| I[Skip existing annotation]
+    H -->|"No"| J{"Was --apply specified?"}
+
+    J -->|"No: dry run"| K["Report as ready<br/>Do not create an annotation"]
+    J -->|"Yes: --apply"| L["Create annotation<br/>POST /annotation?itemId=...<br/>Send document as JSON"]
+    L --> M["Verify creation<br/>Query slide annotations again"]
+
+    N --> R[Write manifest locally on HiPerGator]
+    X --> R
+    I --> R
+    K --> R
+    M --> R
+```
+
+## Implementation
+
+The API request flow is implemented in:
+
+- `src/hpg_athena_transfer/api.py`
+- `src/hpg_athena_transfer/transfer.py`
+
 The tests use synthetic annotations and a mocked Athena API.
