@@ -31,6 +31,8 @@ transfer-manifest*.json
 *.SVSLIDE
 *.czi
 *.CZI
+slurm-*.out
+slurm-*.err
 *_heatmap.json
 *_refined_heatmap.json
 *_mask_gt.json

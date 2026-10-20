@@ -64,3 +64,32 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 Tests use synthetic annotation documents and mocked Athena API calls. They never read the real JSON directory or require an Athena account.
+
+## Submit a HiPerGator job
+
+The included [`run_transfer.sh`](run_transfer.sh) requests the `sarder-hubmap` account on `hpg-default` with **one CPU, 4 GB RAM, and eight hours**. It uses the project's source directory without installing a package and reads the API key from the environment or the ignored `.env` in this directory. Submit from the project directory so Slurm logs land here.
+
+If you use `.env`, create it interactively so the key is not typed into a saved command:
+
+```bash
+cd /blue/pinaki.sarder/j.fermin/HPG-ATHENA-Transfer
+umask 077
+read -rsp 'Athena API key: ' ATHENA_API_KEY; printf '\n'
+printf 'ATHENA_API_KEY=%s\n' "$ATHENA_API_KEY" > .env
+unset ATHENA_API_KEY
+```
+
+Use the real Athena collection or folder URL in place of the synthetic ID below. Keep the URL in single quotes because Athena browser URLs contain `#`.
+
+```bash
+sbatch run_transfer.sh 'https://athena.rc.ufl.edu/#collection/0123456789abcdef01234567'
+squeue -u "$USER"
+```
+
+The first job is a dry-run. Read `slurm-JOBID.out` and `transfer-manifest-JOBID.json`. Once the matches look correct, submit the same destination with `--apply`:
+
+```bash
+sbatch run_transfer.sh 'https://athena.rc.ufl.edu/#collection/0123456789abcdef01234567' --apply
+```
+
+Each job uses a separate manifest named with its Slurm job ID. Logs and manifests are ignored by Git. You may pass any other CLI option after the destination, such as `--recursive` or `--source DIR`. If the job reports a connection failure, confirm the compute node can reach Athena over HTTPS.
