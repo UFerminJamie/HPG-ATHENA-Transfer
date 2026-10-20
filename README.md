@@ -1,6 +1,6 @@
 # HPG-ATHENA-Transfer
 
-Attach JSON annotations generated on HiPerGator to the matching whole-slide image items in [Athena](https://athena.rc.ufl.edu/). The tool calls Athena's Girder/DSA annotation API, so annotations appear in each slide's **Annotations** panel. It never uploads JSON as an ordinary folder file.
+Attach JSON annotations generated on HiPerGator to the matching whole-slide image items in [Athena](https://athena.rc.ufl.edu/). The tool calls Athena's Girder/DSA annotation API, so annotations appear in each slide's **Annotations** panel.
 
 ## Install and authenticate
 
