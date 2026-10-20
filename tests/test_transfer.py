@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from hpg_athena_transfer.annotations import AnnotationError, parse_documents
+from hpg_athena_transfer.annotations import AnnotationError, normalize_scientific_rgba_alpha, parse_documents
 from hpg_athena_transfer.api import APIError, AthenaClient
 from hpg_athena_transfer.matching import Slide, build_index, parse_destination, parse_source, slide_basename
 from hpg_athena_transfer.transfer import PROVENANCE_KEY, transfer
@@ -73,6 +73,14 @@ class MatchingTests(unittest.TestCase):
 
 
 class AnnotationTests(unittest.TestCase):
+    def test_scientific_rgba_alpha_is_explicit_and_exact(self):
+        original = document()
+        original["elements"][0]["fillColor"] = "rgba(255, 105, 180, 4.43172e-07)"
+        converted, count = normalize_scientific_rgba_alpha(original)
+        self.assertEqual(count, 1)
+        self.assertEqual(converted["elements"][0]["fillColor"], "rgba(255, 105, 180, 0.000000443172)")
+        self.assertEqual(original["elements"][0]["fillColor"], "rgba(255, 105, 180, 4.43172e-07)")
+
     def test_native_wrapped_and_list_preserve_geometry(self):
         original = document()
         for payload in (original, {"annotation": original}, [original, document("Second")]):
@@ -154,6 +162,22 @@ class TransferTests(unittest.TestCase):
         client.create_annotation = real_create
         second = transfer(client, self.source, "destination", self.manifest, apply=True)
         self.assertEqual(second["summary"], {"skipped-identical": 1, "uploaded": 1})
+
+    def test_color_adaptation_requires_opt_in_and_is_reported(self):
+        original = document()
+        original["elements"][0]["fillColor"] = "rgba(255, 105, 180, 4.43172e-07)"
+        self.write("Exact_heatmap.json", original)
+        client = FakeClient()
+        without_option = transfer(client, self.source, "destination", self.manifest, apply=True)
+        self.assertEqual(without_option["summary"], {"invalid": 1})
+        self.assertFalse(client.created)
+        with_option = transfer(client, self.source, "destination", self.manifest,
+                               apply=True, normalize_rgba_alpha=True)
+        self.assertEqual(with_option["summary"], {"uploaded": 1})
+        record = json.loads(self.manifest.read_text())["records"][0]
+        self.assertEqual(record["color_format_adaptations"], 1)
+        self.assertEqual(client.created[0]["annotation"]["elements"][0]["fillColor"],
+                         "rgba(255, 105, 180, 0.000000443172)")
 
 
 class ApiTests(unittest.TestCase):

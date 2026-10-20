@@ -2,11 +2,50 @@
 
 import json
 import math
+from decimal import Decimal
+import re
 from typing import Any, Dict, List
 
 
 class AnnotationError(ValueError):
     pass
+
+
+SCIENTIFIC_RGBA_ALPHA = re.compile(
+    r"^(rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*)"
+    r"((?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+)"
+    r"(\s*\))$"
+)
+
+
+def normalize_scientific_rgba_alpha(annotation: Dict[str, Any]) -> tuple:
+    """Return a copy with exponent-form fillColor alpha written as exact decimals.
+
+    This only changes DSA color syntax, not the represented opacity or source
+    file. The caller must opt in and report the number of changed strings.
+    """
+    elements = annotation["elements"]
+    changed_elements = None
+    count = 0
+    for index, element in enumerate(elements):
+        color = element.get("fillColor")
+        match = SCIENTIFIC_RGBA_ALPHA.fullmatch(color) if isinstance(color, str) else None
+        if not match:
+            continue
+        alpha = Decimal(match.group(2))
+        if not 0 <= alpha <= 1:
+            continue
+        if changed_elements is None:
+            changed_elements = list(elements)
+        changed = dict(element)
+        changed["fillColor"] = match.group(1) + format(alpha, "f") + match.group(3)
+        changed_elements[index] = changed
+        count += 1
+    if changed_elements is None:
+        return annotation, 0
+    copied = dict(annotation)
+    copied["elements"] = changed_elements
+    return copied, count
 
 
 def _number(value: Any) -> bool:

@@ -51,11 +51,15 @@ Input may be one native DSA annotation object, a single `{"annotation": {...}}` 
 
 The tool adds `annotation.attributes.hpg_athena_transfer` with a source filename, SHA-256 hash, document index, and annotation type. It checks that marker and hash on subsequent runs, skipping matching documents. It does not replace or delete annotations. After each create request it queries the item's annotation list and confirms the returned ID and name. A failed create can be retried; if a timeout happened after Athena committed it, the next run recognizes the saved hash.
 
+Athena rejects `rgba(...)` fill colors whose alpha is written in scientific notation. The tool flags such documents as `invalid` by default. Use `--normalize-rgba-alpha` to explicitly rewrite only those `fillColor` alpha strings into mathematically equal plain decimal notation in the upload payload. Source JSON is untouched. The manifest records the number of color strings adapted for each annotation, and provenance records that count on Athena.
+
 ## Reports and failure recovery
 
 `transfer-manifest.json` is written after each processed annotation and ignored by Git. It records source path, sample, slide name/ID, type, SHA-256, document index, annotation ID/name, status, and error. Statuses are `planned`, `uploaded`, `skipped-identical`, `unmatched`, `ambiguous`, `invalid`, or `failed`. Console and manifest totals report both files and annotation records; a JSON containing two native documents contributes two records. Unmatched, ambiguous, and invalid files contribute one row because no annotation is created. A file with mixed record outcomes is counted under its most serious status.
 
 If a run stops, rerun the same `--apply` command. Already uploaded documents are skipped by provenance and hash. Inspect `invalid` rows for unsupported or malformed DSA documents and `failed` rows for API/network issues. A 403 means the account lacks access to the destination or annotation write permission; 401 suggests an invalid API key. A network failure means the machine may not reach Athena over HTTPS. Check the [Athena REST API](https://athena.rc.ufl.edu/api/v1) and [large_image annotation schema](https://girder.github.io/large_image/annotations.html) for accepted annotation fields.
+
+If uploads are reported but you cannot see them, open one of the **matched slide items** and refresh its Annotations panel. Annotations may be private to the API-key account; sign in to Athena as that account. A folder page does not show slide annotation entries, and an unmatched slide receives none.
 
 ## Tests
 

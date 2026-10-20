@@ -35,6 +35,8 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--api-url", default="https://athena.rc.ufl.edu/api/v1",
                          help="Girder API base URL (default: %(default)s)")
     command.add_argument("--recursive", action="store_true", help="Search source subdirectories; default is top level only")
+    command.add_argument("--normalize-rgba-alpha", action="store_true",
+                         help="Explicitly rewrite exponent-form rgba fillColor alpha to equal plain decimals; record count in manifest")
     mode = command.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview only (this is the default)")
     mode.add_argument("--apply", action="store_true", help="Create annotations after matching and validation")
@@ -64,7 +66,8 @@ def main() -> int:
                 print("Connected to Athena")
             return 0
         result = transfer(client, args.source, args.destination, args.manifest,
-                          recursive=args.recursive, apply=args.apply)
+                          recursive=args.recursive, apply=args.apply,
+                          normalize_rgba_alpha=args.normalize_rgba_alpha)
         print("Athena user: %s; slides: %d; source files: %d; annotation records: %d" %
               (user.get("login") or user["id"], result["slides"], result["files"], result["records"]))
         print("Duplicate slide basenames: %d" % result["duplicate_slide_basenames"])

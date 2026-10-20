@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .annotations import AnnotationError, parse_documents
+from .annotations import AnnotationError, normalize_scientific_rgba_alpha, parse_documents
 from .api import APIError, AthenaClient
 from .matching import Source, build_index, discover
 
@@ -58,11 +58,13 @@ def _row(source: Source) -> Dict[str, Any]:
     return {"source_path": str(source.path.resolve()), "sample_name": source.sample,
             "annotation_type": source.kind, "slide_name": None, "slide_id": None,
             "sha256": None, "document_index": None, "annotation_id": None,
-            "annotation_name": None, "status": "", "error": None}
+            "annotation_name": None, "color_format_adaptations": 0,
+            "status": "", "error": None}
 
 
 def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest: Path,
-             recursive: bool = False, apply: bool = False) -> Dict[str, Any]:
+             recursive: bool = False, apply: bool = False,
+             normalize_rgba_alpha: bool = False) -> Dict[str, Any]:
     if not source_dir.is_dir():
         raise ValueError("Source directory does not exist or is not readable")
     sources = discover(source_dir, recursive)
@@ -101,21 +103,30 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                     annotation_cache[slide.id] = client.annotations(slide.id)
                 for index, original in enumerate(documents):
                     document_row = dict(row, document_index=index, annotation_name=original["name"])
+                    normalized, adaptations = normalize_scientific_rgba_alpha(original)
                     records = annotation_cache[slide.id]
                     found = _identical(records, sha256, index)
                     if found:
                         document_row.update(status="skipped-identical", annotation_id=found.get("_id"))
+                    elif adaptations and not normalize_rgba_alpha:
+                        document_row.update(status="invalid", error=(
+                            "%d fillColor rgba alpha values use scientific notation; "
+                            "rerun with --normalize-rgba-alpha to preserve their values in DSA-compatible decimal notation"
+                            % adaptations))
                     elif not apply:
                         document_row["status"] = "planned"
+                        document_row["color_format_adaptations"] = adaptations if normalize_rgba_alpha else 0
                     else:
-                        # Add only provenance. All existing document fields and element
-                        # structures are copied intact, with no geometry transformation.
-                        document = dict(original)
+                        # Preserve fields and geometry. Adapt color spelling only
+                        # when requested, and record the exact number of changes.
+                        document_row["color_format_adaptations"] = adaptations if normalize_rgba_alpha else 0
+                        document = dict(normalized if normalize_rgba_alpha else original)
                         document["attributes"] = dict(original.get("attributes", {}))
                         document["attributes"][PROVENANCE_KEY] = {
                             "tool": PROVENANCE_KEY, "source_filename": source.path.name,
                             "sha256": sha256, "document_index": index,
                             "annotation_type": source.kind,
+                            "color_format_adaptations": document_row["color_format_adaptations"],
                         }
                         try:
                             created = client.create_annotation(slide.id, document)
