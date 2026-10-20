@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hpg-athena-transfer"
+version = "0.1.0"
+description = "Attach HiPerGator JSON annotations to matching Athena DSA slides"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+hpg-athena-transfer = "hpg_athena_transfer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
