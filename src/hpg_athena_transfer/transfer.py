@@ -27,6 +27,8 @@ def _provenance(record: Dict[str, Any]) -> Dict[str, Any]:
 def _identical(records: List[Dict[str, Any]], sha256: str, index: int,
                filename: str, relative_path: str) -> Optional[Dict[str, Any]]:
     for record in records:
+        if record.get("_active") is False:
+            continue
         provenance = _provenance(record)
         same_source = (provenance.get("source_relative_path") == relative_path
                        if "source_relative_path" in provenance
@@ -35,6 +37,19 @@ def _identical(records: List[Dict[str, Any]], sha256: str, index: int,
                 and same_source):
             return record
     return None
+
+
+def _complete(record: Dict[str, Any], document: Dict[str, Any]) -> bool:
+    """Confirm that an active Athena annotation has the source geometry count."""
+    annotation = record.get("annotation", {})
+    count = record.get("_elementCount")
+    if count is None and isinstance(annotation, dict):
+        elements = annotation.get("elements")
+        count = len(elements) if isinstance(elements, list) else None
+    return (record.get("_active") is not False
+            and isinstance(annotation, dict)
+            and annotation.get("name") == document["name"]
+            and type(count) is int and count == len(document["elements"]))
 
 
 def _file_summary(rows: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -63,7 +78,8 @@ def _row(source: Source) -> Dict[str, Any]:
     return {"source_path": str(source.path.resolve()), "sample_name": None,
             "annotation_type": source.kind, "slide_name": None, "slide_id": None,
             "sha256": None, "document_index": None, "annotation_id": None,
-            "annotation_name": None, "color_format_adaptations": 0,
+            "annotation_name": None, "element_count": None,
+            "color_format_adaptations": 0,
             "status": "", "error": None}
 
 
@@ -81,7 +97,7 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
     rows: List[Dict[str, Any]] = []
     annotation_cache: Dict[str, List[Dict[str, Any]]] = {}
 
-    for source in sources:
+    for source_index, source in enumerate(sources, 1):
         row = _row(source)
         relative_path = source.path.relative_to(source_dir).as_posix()
         sample_name, candidates = match_source(source.stem, slide_index)
@@ -105,12 +121,17 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                 if slide.id not in annotation_cache:
                     annotation_cache[slide.id] = client.annotations(slide.id)
                 for index, original in enumerate(documents):
-                    document_row = dict(row, document_index=index, annotation_name=original["name"])
+                    document_row = dict(row, document_index=index, annotation_name=original["name"],
+                                        element_count=len(original["elements"]))
                     normalized, adaptations = normalize_scientific_rgba_alpha(original)
                     records = annotation_cache[slide.id]
                     found = _identical(records, sha256, index, source.path.name, relative_path)
                     if found:
-                        document_row.update(status="skipped-identical", annotation_id=found.get("_id"))
+                        if _complete(found, original):
+                            document_row.update(status="skipped-identical", annotation_id=found.get("_id"))
+                        else:
+                            document_row.update(status="failed", annotation_id=found.get("_id"),
+                                                error="existing active annotation has a different name or element count")
                     elif adaptations and not normalize_rgba_alpha:
                         document_row.update(status="invalid", error=(
                             "%d fillColor rgba alpha values use scientific notation; "
@@ -137,9 +158,9 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                             refreshed = client.annotations(slide.id)
                             annotation_cache[slide.id] = refreshed
                             verified = next((a for a in refreshed if a.get("_id") == created["_id"]
-                                             and a.get("annotation", {}).get("name") == original["name"]), None)
+                                             and _complete(a, original)), None)
                             if verified is None:
-                                raise APIError("created annotation could not be verified on the item")
+                                raise APIError("created annotation is not active with the expected name and element count")
                             document_row.update(status="uploaded", annotation_id=created["_id"])
                         except APIError as exc:
                             # The request may have committed before a timeout. Re-query
@@ -151,7 +172,7 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
                                                        relative_path)
                             except APIError:
                                 recovered = None
-                            if recovered:
+                            if recovered and _complete(recovered, original):
                                 document_row.update(status="uploaded", annotation_id=recovered.get("_id"))
                             else:
                                 document_row.update(status="failed", error=str(exc))
@@ -163,7 +184,9 @@ def transfer(client: AthenaClient, source_dir: Path, destination: str, manifest:
             except APIError as exc:
                 row.update(status="failed", error=str(exc))
                 rows.append(row)
-        _write_manifest(manifest, rows, not apply, duplicate_slide_basenames)
+        if source_index % 100 == 0 or row["slide_id"] is not None:
+            _write_manifest(manifest, rows, not apply, duplicate_slide_basenames)
+    _write_manifest(manifest, rows, not apply, duplicate_slide_basenames)
     return {"summary": dict(Counter(row["status"] for row in rows)),
             "file_summary": _file_summary(rows), "duplicate_slide_basenames": duplicate_slide_basenames,
             "files": len(sources), "records": len(rows), "slides": len(slides), "manifest": str(manifest)}

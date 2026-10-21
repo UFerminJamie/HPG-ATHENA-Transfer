@@ -82,7 +82,7 @@ If interrupted, rerun the same `--apply` command. The tool uses a source path re
 
 ## Reports and Slurm
 
-The manifest records source path, matched sample and slide, annotation type, document index, annotation ID, status, and any error. Statuses are `planned`, `uploaded`, `skipped-identical`, `unmatched`, `ambiguous`, `invalid`, and `failed`. A JSON file can contain multiple annotation records. A 401 usually indicates an invalid API key; a 403 usually indicates missing destination access or annotation permission.
+The manifest records source path, matched sample and slide, annotation type, document index, annotation name, element count, annotation ID, status, and any error. Statuses are `planned`, `uploaded`, `skipped-identical`, `unmatched`, `ambiguous`, `invalid`, and `failed`. A JSON file can contain multiple annotation records. An annotation with zero elements can appear in Athena's annotation list but has no geometry to draw. Apply verifies that each created annotation is active on the slide with the expected name and element count. A 401 usually indicates an invalid API key; a 403 usually indicates missing destination access or annotation permission.
 
 To use the included Slurm script, submit from this repository directory and supply your site's account or partition through `sbatch` if required:
 

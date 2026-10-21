@@ -28,12 +28,14 @@ class FakeClient:
         return self._slides
 
     def annotations(self, item_id):
-        return list(self.records.get(item_id, []))
+        return [record for record in self.records.get(item_id, [])
+                if record.get("_active") is not False]
 
     def create_annotation(self, item_id, annotation):
         if self.fail:
             raise APIError("Athena HTTP 503 on POST /annotation")
-        record = {"_id": "annotation%d" % (len(self.created) + 1), "annotation": annotation}
+        record = {"_id": "annotation%d" % (len(self.created) + 1), "annotation": annotation,
+                  "_elementCount": len(annotation["elements"])}
         self.created.append(record)
         self.records.setdefault(item_id, []).append(record)
         return record
@@ -217,6 +219,32 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(record["color_format_adaptations"], 1)
         self.assertEqual(client.created[0]["annotation"]["elements"][0]["fillColor"],
                          "rgba(255, 105, 180, 0.000000443172)")
+
+    def test_both_classes_are_active_and_complete_after_apply(self):
+        cortical = document("cortical heatmap")
+        medullary = document("medullary heatmap")
+        medullary["elements"][0]["fillColor"] = "rgba(1, 2, 3, 4.43172e-07)"
+        self.write("Exact_heatmap.json", [cortical, medullary])
+        client = FakeClient()
+        result = transfer(client, self.source, "destination", self.manifest,
+                          apply=True, normalize_rgba_alpha=True)
+        self.assertEqual(result["summary"], {"uploaded": 2})
+        self.assertEqual([record["_elementCount"] for record in client.annotations("item1")], [1, 1])
+        self.assertEqual([row["element_count"] for row in json.loads(self.manifest.read_text())["records"]], [1, 1])
+        client.created[1]["_active"] = False
+        repeated = transfer(client, self.source, "destination", self.manifest,
+                            apply=True, normalize_rgba_alpha=True)
+        self.assertEqual(repeated["summary"], {"skipped-identical": 1, "uploaded": 1})
+        self.assertEqual(len(client.annotations("item1")), 2)
+
+    def test_incomplete_existing_annotation_is_reported(self):
+        self.write("Exact_heatmap.json", document())
+        client = FakeClient()
+        transfer(client, self.source, "destination", self.manifest, apply=True)
+        client.created[0]["_elementCount"] = 0
+        repeated = transfer(client, self.source, "destination", self.manifest, apply=True)
+        self.assertEqual(repeated["summary"], {"failed": 1})
+        self.assertEqual(len(client.created), 1)
 
 
 class ApiTests(unittest.TestCase):
