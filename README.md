@@ -105,3 +105,21 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
 The tests use synthetic annotations and a mocked Athena API.
+
+## Transfer flow
+
+```mermaid
+flowchart LR
+    A["HiPerGator<br/>Local JSON files"] --> B["Get Girder token<br/>POST /api_key/token<br/>Use Girder-Token header"]
+    B --> C["Search destination<br/>recursively<br/>GET /folder, /item<br/>GET /item/{id}/files"]
+    C --> D["Match slide filename<br/>Validate JSON locally"]
+    D --> E["Check annotations<br/>GET /annotation<br/>?itemId=..."]
+    E --> F{"Next step"}
+    F -->|"Already uploaded"| G["Skip"]
+    F -->|"Dry run"| H["Report only"]
+    F -->|"--apply"| I["POST annotation<br/>Verify with GET"]
+    G --> J["Write local<br/>manifest"]
+    H --> J
+    I --> J
+```
+
